@@ -33,6 +33,16 @@ jobs:
       - name: Build DRUNIX peer and network tools
         run: make peer orderer configtxgen configtxlator osnadmin cryptogen discover ledgerutil
 
+      - name: Provide the docker-compose command expected by DRUNIX
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/docker-compose" <<'SH'
+          #!/usr/bin/env bash
+          exec docker compose "$@"
+          SH
+          chmod +x "$HOME/.local/bin/docker-compose"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Start the two-organization DRUNIX test network and channel
         working-directory: drunix-network/test-network
         run: ./network.sh up createChannel -c mychannel -r 15 -d 5
