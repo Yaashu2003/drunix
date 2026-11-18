@@ -1,0 +1,75 @@
+name: TrustMesh on DRUNIX test network
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trustmesh-ledger-smoke:
+    name: Deploy and verify synthetic payment decisions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout DRUNIX fork
+        uses: actions/checkout@v7.0.1
+
+      - name: Checkout TrustMesh
+        run: git clone --depth 1 https://github.com/Yaashu2003/trustmesh.git trustmesh
+
+      - name: Install Go from DRUNIX go.mod
+        uses: actions/setup-go@v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Check free runner toolchain
+        run: |
+          go version
+          docker version
+          docker compose version
+
+      - name: Build DRUNIX peer and network tools
+        run: make peer orderer configtxgen configtxlator osnadmin cryptogen discover ledgerutil
+
+      - name: Start the two-organization DRUNIX test network and channel
+        working-directory: drunix-network/test-network
+        run: ./network.sh up createChannel -c mychannel -r 15 -d 5
+
+      - name: Deploy TrustMesh chaincode
+        working-directory: drunix-network/test-network
+        run: ./network.sh deployCC -c mychannel -ccn trustmesh -ccp ../../trustmesh/chaincode/trustmesh -ccl go -ccv 1.0 -ccs 1 -r 15 -d 5
+
+      - name: Start TrustMesh's synthetic risk API
+        working-directory: trustmesh
+        run: |
+          TRUSTMESH_TRANSACTIONS=10000 PORT=4173 node server.js > /tmp/trustmesh-api.log 2>&1 &
+          echo $! > /tmp/trustmesh-api.pid
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:4173/api/health >/dev/null; then
+              curl --fail --silent http://127.0.0.1:4173/api/overview | jq '{transactionCount,accountCount,bankCount}'
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/trustmesh-api.log
+          exit 1
+
+      - name: Screen payments, submit decisions, and query ledger records
+        run: bash trustmesh/scripts/drunix-ledger-smoke.sh
+        env:
+          DRUNIX_TEST_NETWORK: ${{ github.workspace }}/drunix-network/test-network
+          TRUSTMESH_API_URL: http://127.0.0.1:4173
+          DRUNIX_CHANNEL: mychannel
+          DRUNIX_CHAINCODE: trustmesh
+
+      - name: Stop the DRUNIX network
+        if: always()
+        working-directory: drunix-network/test-network
+        run: ./network.sh down || true
+
+      - name: Stop the TrustMesh API
+        if: always()
+        run: |
+          if [ -f /tmp/trustmesh-api.pid ]; then kill "$(cat /tmp/trustmesh-api.pid)" 2>/dev/null || true; fi
