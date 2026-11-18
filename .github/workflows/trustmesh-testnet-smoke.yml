@@ -33,6 +33,12 @@ jobs:
       - name: Build DRUNIX peer and network tools
         run: make peer orderer configtxgen configtxlator osnadmin cryptogen discover ledgerutil
 
+      - name: Build the DRUNIX chaincode builder and runtime images
+        run: |
+          make baseos-docker ccenv-docker
+          docker tag "$(make -s baseos-docker-list)" npcioss/drunix-baseos:1.0
+          docker tag "$(make -s ccenv-docker-list)" npcioss/drunix-ccenv:1.0
+
       - name: Provide the docker-compose command expected by DRUNIX
         run: |
           mkdir -p "$HOME/.local/bin"
